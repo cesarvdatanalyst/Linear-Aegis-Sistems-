@@ -233,3 +233,56 @@ else:
                         return 0.0
 
                 df["Monto_Numerico"] = df["Status_Cobro"].apply(limpiar_montos)
+
+                # Regla 4: Cálculo de Dinero en Riesgo (OON o montos pendientes en $0)
+                df_unicos = df_unicos.copy()
+                df_unicos["Monto_Numerico"] = df_unicos["Status_Cobro"].apply(limpiar_montos)
+                riesgo_mask = (df_unicos["Network_Type"] == "OON") | (df_unicos["Monto_Numerico"] == 0.0)
+                dinero_en_riesgo = float(df_unicos.loc[riesgo_mask, "Monto_Numerico"].sum())
+                casos_en_riesgo = int(riesgo_mask.sum())
+
+                # Guardar auditoría en el historial persistente
+                guardar_en_historial(origen_nombre, total_inicial, duplicados_eliminados, dinero_en_riesgo)
+
+                # --------------------------------------------------------------------
+                # 5. VISUALIZACIÓN EJECUTIVA Y REPORTE EXPORTABLE
+                # --------------------------------------------------------------------
+                with col_derecha:
+                    rcm_ui.success(f"✅ Auditoría completada para: {origen_nombre}")
+
+                    m1, m2, m3, m4 = rcm_ui.columns(4)
+                    m1.metric("Registros Procesados", total_inicial)
+                    m2.metric("Duplicados Removidos", duplicados_eliminados)
+                    m3.metric("Alertas OON / Sin Cobro", casos_en_riesgo)
+                    m4.metric("Capital Auditado ($)", f"${df_unicos['Monto_Numerico'].sum():,.2f}")
+
+                    def resaltar_auditoria(row):
+                        if row["Network_Type"] == "OON" and row["Monto_Numerico"] == 0.0:
+                            return ["background-color: #7f1d1d; color: #fecaca"] * len(row)
+                        elif row["Network_Type"] == "OON":
+                            return ["background-color: #78350f; color: #fde68a"] * len(row)
+                        return [""] * len(row)
+
+                    rcm_ui.subheader("📋 Matriz Clínica Auditada")
+                    rcm_ui.dataframe(
+                        df_unicos.style.apply(resaltar_auditoria, axis=1),
+                        use_container_width=True,
+                    )
+
+                    fig = px.bar(
+                        df_unicos,
+                        x="Paciente",
+                        y="Monto_Numerico",
+                        color="Network_Type",
+                        title="Distribución de Facturación por Tipo de Red (In-Network vs OON)",
+                        template="plotly_dark",
+                    )
+                    rcm_ui.plotly_chart(fig, use_container_width=True)
+
+                    csv_limpio = df_unicos.to_csv(index=False).encode("utf-8")
+                    rcm_ui.download_button(
+                        label="⬇️ Descargar Lote Saneado (CSV)",
+                        data=csv_limpio,
+                        file_name=f"auditado_{origen_nombre}.csv",
+                        mime="text/csv",
+                    )
